@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YouTube 视频下载器</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .progress-bar {
+            transition: width 0.3s ease;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen">
+    <div class="container mx-auto px-4 py-8">
+        <!-- 标题部分 -->
+        <div class="text-center mb-8">
+            <h1 class="text-4xl font-bold text-gray-800 mb-2">YouTube 视频下载器</h1>
+            <p class="text-gray-600">输入YouTube视频链接，轻松下载高质量视频</p>
+        </div>
+
+        <!-- 下载表单 -->
+        <div class="max-w-xl mx-auto bg-white rounded-lg shadow-md p-6 mb-8">
+            <form id="downloadForm" class="space-y-4">
+                <div>
+                    <input type="url" id="videoUrl" required
+                           class="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                           placeholder="请输入YouTube视频链接...">
+                </div>
+                <button type="submit"
+                        class="w-full bg-blue-500 hover:bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg transition duration-200">
+                    开始下载
+                </button>
+            </form>
+            
+            <!-- 下载进度 -->
+            <div id="downloadProgress" class="hidden mt-4">
+                <div class="w-full bg-gray-200 rounded-full h-2.5">
+                    <div class="progress-bar bg-blue-600 h-2.5 rounded-full" style="width: 0%"></div>
+                </div>
+                <div class="mt-2 text-sm text-gray-600">
+                    <p id="progressText">准备下载...</p>
+                    <p id="downloadSpeed" class="hidden">下载速度: <span>0</span> MB/s</p>
+                    <p id="downloadSize" class="hidden">已下载: <span>0</span> MB / <span>0</span> MB</p>
+                    <p id="downloadEta" class="hidden">预计剩余时间: <span>0</span> 秒</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- 下载列表 -->
+        <div class="max-w-4xl mx-auto">
+            <h2 class="text-2xl font-bold text-gray-800 mb-4">已下载视频</h2>
+            <div class="space-y-4">
+                {% for video in downloads %}
+                <div class="bg-white rounded-lg shadow-md p-4">
+                    <div class="flex items-start space-x-4">
+                        <div class="flex-shrink-0">
+                            <img src="{{ video.thumbnail }}" alt="缩略图" 
+                                 class="w-48 h-27 object-cover rounded">
+                        </div>
+                        <div class="flex-grow">
+                            <h3 class="text-xl font-semibold text-gray-800">{{ video.title }}</h3>
+                            <p class="text-gray-600 mt-1">上传者: {{ video.uploader }}</p>
+                            <p class="text-gray-600">时长: {{ video.duration // 60 }}分{{ video.duration % 60 }}秒</p>
+                            <p class="text-gray-600 mt-2 line-clamp-2">{{ video.description }}</p>
+                            <p class="text-gray-500 mt-2 text-sm">存储路径: {{ video.filepath }}</p>
+                            
+                            <!-- 视频预览 -->
+                            <video controls class="mt-4 w-full max-w-2xl rounded">
+                                <source src="/downloads/{{ video.filepath }}" type="video/{{ video.filepath.split('.')[-1] }}">
+                                您的浏览器不支持视频播放。
+                            </video>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const downloadForm = document.getElementById('downloadForm');
+        const progressDiv = document.getElementById('downloadProgress');
+        const progressBar = progressDiv.querySelector('.progress-bar');
+        const progressText = document.getElementById('progressText');
+
+        downloadForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const videoUrl = document.getElementById('videoUrl').value;
+            
+            // 显示进度条
+            progressDiv.classList.remove('hidden');
+            progressBar.style.width = '0%';
+            progressText.textContent = '准备下载...';
+            
+            try {
+                // 开始下载
+                const response = await fetch('/download?url=' + encodeURIComponent(videoUrl), {
+                    method: 'POST'
+                });
+                const data = await response.json();
+                
+                // 轮询进度
+                const taskId = data.task_id;
+                await pollProgress(taskId);
+                
+            } catch (error) {
+                progressText.textContent = '下载失败: ' + error.message;
+            }
+        });
+
+        async function pollProgress(taskId) {
+            const downloadSpeed = document.getElementById('downloadSpeed');
+            const downloadSize = document.getElementById('downloadSize');
+            const downloadEta = document.getElementById('downloadEta');
+            
+            while (true) {
+                const response = await fetch('/progress/' + taskId);
+                const data = await response.json();
+                
+                if (data.status === 'not_found') {
+                    break;
+                }
+                
+                progressBar.style.width = data.progress + '%';
+                
+                // 显示下载详细信息
+                if (data.status === 'pending' && data.total_bytes > 0) {
+                    downloadSpeed.classList.remove('hidden');
+                    downloadSize.classList.remove('hidden');
+                    downloadEta.classList.remove('hidden');
+                    
+                    // 更新下载速度
+                    const speedMB = (data.speed / (1024 * 1024)).toFixed(2);
+                    downloadSpeed.querySelector('span').textContent = speedMB;
+                    
+                    // 更新下载大小
+                    const downloadedMB = (data.downloaded_bytes / (1024 * 1024)).toFixed(2);
+                    const totalMB = (data.total_bytes / (1024 * 1024)).toFixed(2);
+                    const sizeSpans = downloadSize.querySelectorAll('span');
+                    sizeSpans[0].textContent = downloadedMB;
+                    sizeSpans[1].textContent = totalMB;
+                    
+                    // 更新预计剩余时间
+                    downloadEta.querySelector('span').textContent = data.eta;
+                    
+                    progressText.textContent = `下载中... ${Math.round(data.progress)}%`;
+                }
+                
+                if (data.status === 'completed') {
+                    progressText.textContent = '下载完成！';
+                    setTimeout(() => {
+                        progressDiv.classList.add('hidden');
+                        location.reload(); // 刷新页面显示新下载的视频
+                    }, 2000);
+                    break;
+                } else if (data.status === 'error') {
+                    progressText.textContent = '下载失败: ' + data.error;
+                    break;
+                }
+                
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+        }
+    </script>
+</body>
+</html>
